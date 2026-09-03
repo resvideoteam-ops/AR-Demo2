@@ -1,0 +1,596 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
+    <meta name="theme-color" content="#111111" />
+    <title>AR Camera — Animated Cat</title>
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Lucky Cat AR" />
+    <script src="./vendor-aframe-1.6.0.js"></script>
+    <script src="./vendor-aframe-ar-3.4.7.js"></script>
+    <script src="./analytics.js"></script>
+    <style>
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      html, body {
+        width: 100%; height: 100%; margin: 0; overflow: hidden;
+        background: transparent; font-family: Arial, Helvetica, sans-serif;
+      }
+      #arjs-video, body > video {
+        z-index: 0 !important;
+        background: transparent !important;
+      }
+      a-scene, canvas.a-canvas {
+        z-index: 1 !important;
+        background: transparent !important;
+      }
+      canvas.a-canvas { touch-action: none; }
+      .ar-ui {
+        position: fixed; z-index: 10; inset: 0; display: flex; flex-direction: column;
+        justify-content: space-between; pointer-events: none;
+        padding: max(1rem, env(safe-area-inset-top)) 1rem max(1rem, env(safe-area-inset-bottom));
+      }
+      .top { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+      .back {
+        pointer-events: auto; display: inline-grid; width: 3rem; height: 3rem;
+        place-items: center; border: 1px solid rgba(255,255,255,.42);
+        border-radius: 999px; color: #fff; background: rgba(10,10,10,.62);
+        backdrop-filter: blur(14px); text-decoration: none; font-size: 1.55rem;
+      }
+      .badge {
+        display: inline-flex; align-items: center; gap: .55rem; padding: .8rem 1rem;
+        border: 1px solid rgba(255,255,255,.33); border-radius: 999px; color: #fff;
+        background: rgba(10,10,10,.62); backdrop-filter: blur(14px);
+        font-size: .82rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase;
+      }
+      .badge::before {
+        width: .55rem; height: .55rem; border-radius: 50%; background: #ff5a1f;
+        box-shadow: 0 0 0 5px rgba(255,90,31,.18); content: "";
+      }
+      .guide {
+        align-self: center; width: min(78vw, 430px); aspect-ratio: 1;
+        border: 2px solid rgba(255,255,255,.34); border-radius: 1rem;
+        transition: opacity .2s ease, transform .2s ease;
+      }
+      .guide.found { opacity: 0; transform: scale(.94); }
+      .bottom {
+        align-self: center; width: min(92vw, 480px); padding: 1rem 1.2rem;
+        border: 1px solid rgba(255,255,255,.3); border-radius: 1rem; color: #fff;
+        background: rgba(10,10,10,.7); backdrop-filter: blur(16px); text-align: center;
+      }
+      .bottom strong { display: block; margin-bottom: .35rem; font-size: 1rem; }
+      .bottom span { color: rgba(255,255,255,.72); font-size: .86rem; line-height: 1.4; }
+      .capture {
+        position: absolute; left: 50%; bottom: calc(max(1rem, env(safe-area-inset-bottom)) + 6.8rem);
+        width: 4.5rem; height: 4.5rem; padding: 0; pointer-events: auto;
+        transform: translateX(-50%); border: 4px solid rgba(255,255,255,.92);
+        border-radius: 50%; background: rgba(12,12,12,.48); box-shadow: 0 4px 18px rgba(0,0,0,.32);
+        backdrop-filter: blur(10px); cursor: pointer;
+      }
+      .capture::after {
+        position: absolute; inset: .38rem; border-radius: 50%; background: #fff; content: "";
+        transition: transform .12s ease, background .12s ease;
+      }
+      .capture:active::after { transform: scale(.86); background: #ff5a1f; }
+      .capture:disabled { opacity: .55; }
+      .capture[hidden] { display: none; }
+      .reset-view {
+        position: absolute; top: calc(max(1rem, env(safe-area-inset-top)) + 4.2rem); right: 1rem;
+        min-height: 2.75rem; padding: 0 .95rem; pointer-events: auto;
+        border: 1px solid rgba(255,255,255,.42); border-radius: 999px;
+        color: #fff; background: rgba(10,10,10,.62); backdrop-filter: blur(14px);
+        font: inherit; font-size: .82rem; font-weight: 800; cursor: pointer;
+      }
+      .reset-view[hidden] { display: none; }
+      .anim-button {
+        position: absolute; top: calc(max(1rem, env(safe-area-inset-top)) + 7.6rem); right: 1rem;
+        min-height: 2.75rem; max-width: 62vw; padding: 0 .95rem; pointer-events: auto;
+        overflow: hidden; border: 1px solid rgba(255,255,255,.42); border-radius: 999px;
+        color: #fff; background: rgba(10,10,10,.62); backdrop-filter: blur(14px);
+        font: inherit; font-size: .82rem; font-weight: 800; white-space: nowrap;
+        text-overflow: ellipsis; cursor: pointer;
+      }
+      .anim-button[hidden] { display: none; }
+      .photo-preview {
+        position: fixed; z-index: 30; inset: 0; display: flex; flex-direction: column;
+        gap: 1rem; padding: max(1rem, env(safe-area-inset-top)) 1rem max(1rem, env(safe-area-inset-bottom));
+        background: #090909; pointer-events: auto;
+      }
+      .photo-preview[hidden] { display: none; }
+      .photo-preview img {
+        width: 100%; min-height: 0; flex: 1; object-fit: contain; border-radius: .9rem;
+        background: #000;
+      }
+      .preview-actions { display: grid; grid-template-columns: 1fr 1.35fr; gap: .75rem; }
+      .preview-button {
+        min-height: 3.25rem; border: 1px solid rgba(255,255,255,.4); border-radius: .8rem;
+        color: #fff; background: #202020; font: inherit; font-weight: 800;
+      }
+      .preview-button.primary { border-color: #ff5a1f; background: #ff5a1f; }
+      .preview-note { margin: -.35rem 0 0; color: rgba(255,255,255,.68); font-size: .78rem; text-align: center; }
+      .corner {
+        position: absolute; width: 2.4rem; height: 2.4rem;
+        border-color: #ff5a1f; border-style: solid;
+      }
+      .c1 { top: 22%; left: 11%; border-width: 4px 0 0 4px; }
+      .c2 { top: 22%; right: 11%; border-width: 4px 4px 0 0; }
+      .c3 { bottom: 22%; left: 11%; border-width: 0 0 4px 4px; }
+      .c4 { right: 11%; bottom: 22%; border-width: 0 4px 4px 0; }
+      .found ~ .corner { opacity: 0; }
+      @media (orientation: landscape) and (max-height: 540px) {
+        .guide { width: min(46vh, 320px); }
+        .bottom { width: auto; max-width: 55vw; }
+        .c1, .c2 { top: 14%; }
+        .c3, .c4 { bottom: 14%; }
+      }
+    </style>
+    <script>
+      AFRAME.registerComponent("marker-status", {
+        init: function () {
+          const status = document.querySelector("#status-copy");
+          const guide = document.querySelector("#guide");
+          const badge = document.querySelector("#tracking-badge");
+          const model = document.querySelector("#cat-model-entity");
+          const capture = document.querySelector("#capture-button");
+          const resetView = document.querySelector("#reset-view-button");
+          const preview = document.querySelector("#photo-preview");
+          const previewImage = document.querySelector("#photo-preview-image");
+          const previewNote = document.querySelector("#preview-note");
+          const retake = document.querySelector("#retake-button");
+          const savePhoto = document.querySelector("#save-photo-button");
+          const scene = document.querySelector("a-scene");
+          const marker = this.el;
+          const component = this;
+          let modelReady = false;
+          let markerVisible = false;
+          let capturedBlob = null;
+          let capturedUrl = null;
+          let userYaw = 0;
+          let activePointer = null;
+          let dragStartX = 0;
+          let dragStartYaw = 0;
+          this.lossTimer = null;
+
+          const track = (name, extra) => {
+            if (window.ARTrack) window.ARTrack.event(name, extra);
+          };
+          track("session_start");
+          scene.addEventListener("arjs-video-loaded", () => track("camera_started"), { once: true });
+
+          const activeModelName = "Cat-Animation.glb";
+          const autoFitModel = true;
+          model.setAttribute("gltf-model", "url(./Cat-Animation.glb?v=1)");
+
+          // --- animation playback -------------------------------------------
+          // A-Frame ships no animation-mixer component, so THREE.AnimationMixer
+          // is driven directly from this component's tick.
+          const animButton = document.querySelector("#anim-button");
+          const animLabel = document.querySelector("#anim-label");
+          let clips = [];
+          let clipIndex = 0;
+
+          const prettyName = (name) =>
+            String(name).replace(/^Armature\|/, "").replace(/\|.*$/, "").replace(/_/g, " ");
+
+          const playClip = (index) => {
+            if (!component.mixer || !clips.length) return;
+            clipIndex = ((index % clips.length) + clips.length) % clips.length;
+            component.mixer.stopAllAction();
+            const action = component.mixer.clipAction(clips[clipIndex]);
+            action.reset();
+            action.setLoop(AFRAME.THREE.LoopRepeat, Infinity);
+            action.play();
+            animLabel.textContent = prettyName(clips[clipIndex].name);
+          };
+
+          animButton.addEventListener("click", () => playClip(clipIndex + 1));
+
+          // Meshy exports arrive at arbitrary scale, so an uploaded model is
+          // measured and fitted to the marker instead of trusting a hard-coded
+          // scale. The bundled model keeps its hand-tuned 4.8.
+          const autoFit = (root) => {
+            const THREE = AFRAME.THREE;
+            model.setAttribute("scale", { x: 1, y: 1, z: 1 });
+            model.object3D.updateMatrixWorld(true);
+            const box = new THREE.Box3().setFromObject(root);
+            const size = new THREE.Vector3();
+            box.getSize(size);
+            const footprint = Math.max(size.x, size.z);
+            if (!isFinite(footprint) || footprint <= 0) return;
+            const factor = 0.9 / footprint;
+            model.setAttribute("scale", { x: factor, y: factor, z: factor });
+            model.setAttribute("position", { x: 0, y: 0.018 - box.min.y * factor, z: 0 });
+          };
+
+          const updateCapture = () => {
+            capture.hidden = !(modelReady && markerVisible);
+            resetView.hidden = !(modelReady && markerVisible);
+          };
+
+          // The model is authored facing +Z, but the viewer stands on the opposite
+          // side of the marker, so it needs half a turn to face them. Drag-rotate
+          // and the Front button both write the whole rotation, so the offset has
+          // to live here rather than only on the element.
+          const BASE_YAW = 180;
+          const normalizeYaw = (degrees) => ((degrees + 180) % 360 + 360) % 360 - 180;
+          const applyYaw = () =>
+            model.setAttribute("rotation", { x: 0, y: normalizeYaw(BASE_YAW + userYaw), z: 0 });
+
+          const bindRotationControls = () => {
+            const canvas = scene.canvas || document.querySelector("canvas.a-canvas");
+            if (!canvas || canvas.dataset.catRotationBound) return;
+            canvas.dataset.catRotationBound = "true";
+
+            canvas.addEventListener("pointerdown", (event) => {
+              if (activePointer !== null || !modelReady || !markerVisible || (event.button !== undefined && event.button !== 0)) return;
+              activePointer = event.pointerId;
+              dragStartX = event.clientX;
+              dragStartYaw = userYaw;
+              if (canvas.setPointerCapture) canvas.setPointerCapture(event.pointerId);
+              event.preventDefault();
+            });
+
+            canvas.addEventListener("pointermove", (event) => {
+              if (event.pointerId !== activePointer) return;
+              userYaw = normalizeYaw(dragStartYaw + (event.clientX - dragStartX) * 0.55);
+              applyYaw();
+              event.preventDefault();
+            });
+
+            const endRotation = (event) => {
+              if (event.pointerId !== activePointer) return;
+              if (canvas.releasePointerCapture && canvas.hasPointerCapture && canvas.hasPointerCapture(event.pointerId)) {
+                canvas.releasePointerCapture(event.pointerId);
+              }
+              activePointer = null;
+            };
+            canvas.addEventListener("pointerup", endRotation);
+            canvas.addEventListener("pointercancel", endRotation);
+          };
+
+          if (scene.canvas) bindRotationControls();
+          scene.addEventListener("render-target-loaded", bindRotationControls, { once: true });
+
+          resetView.addEventListener("click", () => {
+            userYaw = 0;
+            applyYaw();
+            status.innerHTML = "<strong>Front view restored</strong><span>Drag left or right to rotate the Lucky Cat.</span>";
+          });
+
+          const closePreview = () => {
+            preview.hidden = true;
+            previewImage.removeAttribute("src");
+            capturedBlob = null;
+            if (capturedUrl) URL.revokeObjectURL(capturedUrl);
+            capturedUrl = null;
+          };
+
+          retake.addEventListener("click", closePreview);
+
+          savePhoto.addEventListener("click", async () => {
+            if (!capturedBlob) return;
+            const file = new File([capturedBlob], "lucky-cat-ar-photo.jpg", { type: "image/jpeg" });
+            try {
+              if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+                await navigator.share({ files: [file], title: "Lucky Cat AR photo" });
+                track("photo_saved", activeModelName);
+              } else {
+                previewNote.textContent = "Press and hold the photo, then choose Save to Photos.";
+              }
+            } catch (error) {
+              if (error.name !== "AbortError") {
+                previewNote.textContent = "Press and hold the photo, then choose Save to Photos.";
+              }
+            }
+          });
+
+          capture.addEventListener("click", async () => {
+            const video = document.querySelector("#arjs-video") || document.querySelector("video");
+            const arCanvas = document.querySelector("canvas.a-canvas");
+            if (!video || !arCanvas || !scene.renderer || !scene.camera || video.readyState < 2) return;
+
+            capture.disabled = true;
+            // AR.js sizes the video and canvas to COVER the screen, so both hang
+            // outside the viewport -- a 4:3 camera on a tall phone is set roughly
+            // 2.9x wider than the screen with a negative margin-left. Capturing the
+            // whole canvas therefore takes in far more of the scene than the user
+            // can see, which is what made the subject look small in the saved photo.
+            // Capture only the slice that is actually on screen.
+            const rect = arCanvas.getBoundingClientRect();
+            const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+
+            const cropX = Math.max(0, -rect.left);
+            const cropY = Math.max(0, -rect.top);
+            const cropWidth = Math.max(1, Math.min(rect.width - cropX, window.innerWidth));
+            const cropHeight = Math.max(1, Math.min(rect.height - cropY, window.innerHeight));
+
+            const width = Math.max(1, Math.round(cropWidth * pixelRatio));
+            const height = Math.max(1, Math.round(cropHeight * pixelRatio));
+            const output = document.createElement("canvas");
+            output.width = width;
+            output.height = height;
+            const context = output.getContext("2d");
+            if (!context) {
+              capture.disabled = false;
+              return;
+            }
+
+            // The video fills the same element box, so the visible slice maps
+            // straight back onto the camera frame's own pixels.
+            context.drawImage(
+              video,
+              (cropX / rect.width) * video.videoWidth,
+              (cropY / rect.height) * video.videoHeight,
+              (cropWidth / rect.width) * video.videoWidth,
+              (cropHeight / rect.height) * video.videoHeight,
+              0, 0, width, height
+            );
+
+            const wasVisible = marker.object3D.visible;
+            marker.object3D.visible = true;
+            const drawLayer = (layer) => {
+              const scaleX = layer.width / rect.width;
+              const scaleY = layer.height / rect.height;
+              context.drawImage(
+                layer,
+                cropX * scaleX, cropY * scaleY,
+                cropWidth * scaleX, cropHeight * scaleY,
+                0, 0, width, height
+              );
+            };
+
+            try {
+              scene.setAttribute("screenshot", {
+                width: Math.max(1, Math.round(rect.width * pixelRatio)),
+                height: Math.max(1, Math.round(rect.height * pixelRatio))
+              });
+              const screenshot = scene.components.screenshot;
+              if (screenshot && screenshot.getCanvas) {
+                drawLayer(screenshot.getCanvas("perspective"));
+              } else {
+                scene.renderer.render(scene.object3D, scene.camera);
+                drawLayer(arCanvas);
+              }
+            } catch (error) {
+              scene.renderer.render(scene.object3D, scene.camera);
+              drawLayer(arCanvas);
+            } finally {
+              marker.object3D.visible = wasVisible;
+            }
+
+            const blob = await new Promise((resolve) => output.toBlob(resolve, "image/jpeg", .92));
+            if (!blob) {
+              capture.disabled = false;
+              return;
+            }
+
+            if (capturedUrl) URL.revokeObjectURL(capturedUrl);
+            capturedBlob = blob;
+            capturedUrl = URL.createObjectURL(blob);
+            previewImage.src = capturedUrl;
+            previewNote.textContent = "On iPhone, choose Save Image from the share menu.";
+            preview.hidden = false;
+            capture.disabled = false;
+            track("photo_captured", activeModelName);
+          });
+
+          // The GLB is a metallic-roughness material with a metallic map. Metal
+          // derives nearly all of its appearance from reflected surroundings, so
+          // with scene.environment unset it renders shadeless no matter how many
+          // lights are added. This builds a cheap procedural sky/ground probe and
+          // falls back to biasing the material toward diffuse if PMREM is missing.
+          const shadeModel = (root) => {
+            const THREE = AFRAME.THREE;
+            let envMap = null;
+            try {
+              if (THREE && THREE.PMREMGenerator && scene.renderer) {
+                const canvas = document.createElement("canvas");
+                canvas.width = 64;
+                canvas.height = 64;
+                const ctx = canvas.getContext("2d");
+                const gradient = ctx.createLinearGradient(0, 0, 0, 64);
+                gradient.addColorStop(0, "#fbf6ea");
+                gradient.addColorStop(0.5, "#a99f92");
+                gradient.addColorStop(1, "#37322c");
+                ctx.fillStyle = gradient;
+                ctx.fillRect(0, 0, 64, 64);
+                const texture = new THREE.Texture(canvas);
+                texture.mapping = THREE.EquirectangularReflectionMapping;
+                if (THREE.SRGBColorSpace) texture.colorSpace = THREE.SRGBColorSpace;
+                texture.needsUpdate = true;
+                const pmrem = new THREE.PMREMGenerator(scene.renderer);
+                envMap = pmrem.fromEquirectangular(texture).texture;
+                pmrem.dispose();
+                texture.dispose();
+              }
+            } catch (error) {
+              envMap = null;
+            }
+
+            if (envMap) scene.object3D.environment = envMap;
+
+            root.traverse((node) => {
+              if (!node.isMesh || !node.material) return;
+              const materials = Array.isArray(node.material) ? node.material : [node.material];
+              materials.forEach((material) => {
+                if (!material.isMeshStandardMaterial) return;
+                if (envMap) {
+                  material.envMap = envMap;
+                  material.envMapIntensity = 1.15;
+                }
+                // Exported fully metallic (metalness defaults to 1 with no
+                // metallic-roughness map) and fully emissive, which ignores the
+                // scene lights and reads as flat. Bias it back toward diffuse.
+                material.metalness = Math.min(material.metalness, 0.05);
+                material.roughness = Math.max(material.roughness, 0.65);
+                if (material.emissiveMap || (material.emissive && material.emissive.getHex() !== 0)) {
+                  material.emissiveIntensity = 0.18;
+                }
+                material.needsUpdate = true;
+              });
+            });
+          };
+
+          model.addEventListener("model-loaded", (event) => {
+            const loaded = (event.detail && event.detail.model) || model.getObject3D("mesh");
+            if (loaded) {
+              shadeModel(loaded);
+              if (autoFitModel) autoFit(loaded);
+            }
+            if (loaded) {
+              clips = loaded.animations || [];
+              if (clips.length) {
+                component.mixer = new AFRAME.THREE.AnimationMixer(loaded);
+                const preferred = clips.findIndex((c) => /walk/i.test(c.name));
+                playClip(preferred >= 0 ? preferred : 0);
+                animButton.hidden = false;
+              }
+            }
+            modelReady = true;
+            track("model_loaded", activeModelName);
+            updateCapture();
+            if (markerVisible) {
+              badge.textContent = "Target locked";
+              status.innerHTML = "<strong>Cat found</strong><span>Drag to rotate. Tap the animation chip to change the move.</span>";
+            }
+          });
+          model.addEventListener("model-error", () => {
+            track("model_error", activeModelName);
+            capture.hidden = true;
+            badge.textContent = "3D model failed";
+            status.innerHTML = "<strong>Could not load the Lucky Cat</strong><span>Close this page, reopen it and try again.</span>";
+          });
+          this.el.addEventListener("markerFound", () => {
+            if (this.lossTimer) clearTimeout(this.lossTimer);
+            this.lossTimer = null;
+            if (!markerVisible) track("marker_found", activeModelName);
+            markerVisible = true;
+            updateCapture();
+            guide.classList.add("found");
+            badge.textContent = modelReady ? "Target locked" : "Loading 3D cat";
+            status.innerHTML = modelReady
+              ? "<strong>Cat found</strong><span>Drag to rotate. Tap the animation chip to change the move.</span>"
+              : "<strong>Target found</strong><span>The Lucky Cat is still loading…</span>";
+          });
+          // The model is never forced visible past a real marker loss: pinning a
+          // stale pose is what read as "frozen and not following the camera".
+          // This delay only debounces the on-screen copy so brief dropouts do not
+          // make the guide box and status text flash.
+          const settleLoss = () => {
+            this.lossTimer = null;
+            markerVisible = false;
+            updateCapture();
+            guide.classList.remove("found");
+            badge.textContent = "Looking for target";
+            status.innerHTML = "<strong>Point at the printed target</strong><span>Keep the full black square inside the frame.</span>";
+          };
+
+          this.el.addEventListener("markerLost", () => {
+            badge.textContent = "Hold steady";
+            status.innerHTML = "<strong>Marker lost</strong><span>Bring the complete black square back into view.</span>";
+            if (this.lossTimer) clearTimeout(this.lossTimer);
+            this.lossTimer = setTimeout(settleLoss, 900);
+          });
+        },
+        tick: function (time, delta) {
+          if (this.mixer && delta) this.mixer.update(delta / 1000);
+        },
+        remove: function () {
+          if (this.mixer) this.mixer.stopAllAction();
+          if (this.lossTimer) clearTimeout(this.lossTimer);
+        }
+      });
+    </script>
+  </head>
+  <body>
+    <div class="ar-ui" aria-live="polite">
+      <div class="top">
+        <a class="back" href="./index.html" aria-label="Close AR camera">×</a>
+        <div class="badge" id="tracking-badge">Looking for target</div>
+      </div>
+      <div class="guide" id="guide" aria-hidden="true"></div>
+      <button class="reset-view" id="reset-view-button" type="button" aria-label="Reset Lucky Cat to front view" hidden>↻ Front</button>
+      <button class="anim-button" id="anim-button" type="button" aria-label="Change animation" hidden>&#9654; <span id="anim-label">&#8212;</span></button>
+      <button class="capture" id="capture-button" type="button" aria-label="Take AR photo" hidden></button>
+      <div class="bottom" id="status-copy">
+        <strong>Point at the printed target</strong>
+        <span>Keep the full black square inside the frame.</span>
+      </div>
+      <i class="corner c1" aria-hidden="true"></i>
+      <i class="corner c2" aria-hidden="true"></i>
+      <i class="corner c3" aria-hidden="true"></i>
+      <i class="corner c4" aria-hidden="true"></i>
+    </div>
+
+    <div class="photo-preview" id="photo-preview" aria-label="Captured AR photo" hidden>
+      <img id="photo-preview-image" alt="Captured camera view with the Lucky Cat" />
+      <div class="preview-actions">
+        <button class="preview-button" id="retake-button" type="button">Retake</button>
+        <button class="preview-button primary" id="save-photo-button" type="button">Save to Photos</button>
+      </div>
+      <p class="preview-note" id="preview-note">On iPhone, choose Save Image from the share menu.</p>
+    </div>
+
+    <a-scene
+      embedded
+      vr-mode-ui="enabled: false"
+      renderer="antialias: true; alpha: true; colorManagement: true; toneMapping: ACESFilmic"
+      arjs="sourceType: webcam; detectionMode: mono; patternRatio: 0.5; debugUIEnabled: false; trackingMethod: best;"
+    >
+      <a-assets timeout="30000"></a-assets>
+      <a-marker
+        type="pattern"
+        url="./card2.patt"
+        marker-status
+        emitevents="true"
+        smooth="true"
+        smooth-count="7"
+        smooth-tolerance="0.01"
+        smooth-threshold="3"
+      >
+        <a-gltf-model
+          id="cat-model-entity"
+          position="0 0.018 0"
+          scale="4.8 4.8 4.8"
+          rotation="0 180 0"
+        ></a-gltf-model>
+        <a-ring
+          position="0 0.015 0"
+          rotation="-90 0 0"
+          radius-inner="0.54"
+          radius-outer="0.58"
+          color="#ff5a1f"
+          material="opacity: 0.9; transparent: true"
+          animation="property: rotation; to: -90 0 360; dur: 9000; easing: linear; loop: true"
+        ></a-ring>
+        <a-circle
+          position="0 0.006 0"
+          rotation="-90 0 0"
+          radius="0.48"
+          color="#000000"
+          material="opacity: 0.18; transparent: true"
+        ></a-circle>
+        <a-light type="ambient" color="#ffffff" intensity="0.18"></a-light>
+        <a-light type="hemisphere" color="#ffffff" ground-color="#b0a494" intensity="0.45"></a-light>
+        <a-light type="directional" color="#fff1dc" intensity="1.15" position="1 2 1"></a-light>
+        <a-light type="directional" color="#9fb6d4" intensity="0.35" position="-1.2 0.8 -1"></a-light>
+      </a-marker>
+      <a-entity camera></a-entity>
+    </a-scene>
+    <script>
+      // Registered from both pages so the app installs whichever one is opened first.
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", () => {
+          navigator.serviceWorker.register("./sw.js").catch(() => {
+            /* offline support is optional; the page works without it */
+          });
+        });
+      }
+    </script>
+  </body>
+</html>

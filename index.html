@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <meta name="theme-color" content="#f5f2ea" />
+    <title>Animated Cat AR</title>
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Lucky Cat AR" />
+    <style>
+      * { box-sizing: border-box; }
+      :root { --ink:#111; --paper:#f5f2ea; --orange:#ff5a1f; }
+      body {
+        margin: 0; min-height: 100svh; padding: 24px;
+        color: var(--ink); background: var(--paper);
+        font-family: Arial, Helvetica, sans-serif;
+      }
+      main { width: min(680px, 100%); margin: 0 auto; }
+      header {
+        display:flex; align-items:center; justify-content:space-between;
+        padding-bottom:18px; border-bottom:1px solid rgba(17,17,17,.18);
+        font-size:13px; font-weight:900; letter-spacing:.12em;
+      }
+      .ready { display:flex; align-items:center; gap:8px; letter-spacing:0; }
+      .ready::before { width:9px; height:9px; border-radius:50%; background:#20a45a; content:""; }
+      h1 { margin:56px 0 18px; max-width:620px; font-size:clamp(50px,13vw,86px); line-height:.92; letter-spacing:-.065em; }
+      .lead { margin:0 0 28px; color:#56514a; font-size:18px; line-height:1.6; }
+      .actions { display:grid; gap:12px; }
+      a.button {
+        display:flex; min-height:60px; align-items:center; justify-content:center;
+        border:2px solid var(--ink); border-radius:8px; padding:14px 18px;
+        color:#fff; background:var(--ink); box-shadow:6px 6px 0 var(--orange);
+        font-size:17px; font-weight:900; text-decoration:none;
+      }
+      a.secondary { color:var(--ink); background:transparent; box-shadow:none; }
+      .note { margin:22px 0 40px; color:#6d6962; font-size:15px; line-height:1.55; }
+      .target {
+        border:2px solid var(--ink); border-radius:14px; padding:16px;
+        background:#fff; box-shadow:10px 10px 0 var(--ink);
+      }
+      .target strong { display:block; margin-bottom:13px; }
+      .target img { display:block; width:100%; border-radius:6px; }
+      .downloads { display:flex; flex-wrap:wrap; gap:16px; margin-top:17px; }
+      .downloads a { font-size:15px; font-weight:800; text-underline-offset:4px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <span>AR CHARACTER CARD 02</span>
+        <span class="ready">Ready</span>
+      </header>
+      <h1>Meet the animated cat.</h1>
+      <p class="lead">Print the card, lay it flat, then point your phone at it. The cat appears and moves — seven animations to cycle through.</p>
+      <div class="actions">
+        <a class="button" href="./ar.html">Start AR camera</a>
+        <a class="button secondary" href="./card2-print-a4.svg" download>Download A4 card</a>
+      </div>
+      <p class="note">Keep the complete black square visible. Tap the animation chip to switch between Walking, Running, Back Jump, Boxing Warmup and more. The white shutter button saves an AR photo.</p>
+      <section class="target">
+        <strong>Printable camera target</strong>
+        <img src="./card2-marker.png" alt="AR tracking marker for card 02" style="max-width:340px;margin:0 auto" />
+        <div class="downloads">
+          <a href="./card2-print-a4.svg" download>A4 print sheet (SVG)</a>
+          <a href="./card2-marker.png" download>Marker PNG</a>
+        </div>
+      </section>
+    </main>
+    <script>
+      // Registered from both pages so the app installs whichever one is opened first.
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", () => {
+          navigator.serviceWorker.register("./sw.js").catch(() => {
+            /* offline support is optional; the page works without it */
+          });
+        });
+      }
+    </script>
+  </body>
+</html>
