@@ -79,6 +79,34 @@
       .capture:active::after { transform: scale(.86); background: #ff5a1f; }
       .capture:disabled { opacity: .55; }
       .capture[hidden] { display: none; }
+      .record {
+        position: absolute; left: 50%;
+        bottom: calc(max(1rem, env(safe-area-inset-bottom)) + 7.35rem);
+        display: grid; width: 3.4rem; height: 3.4rem; padding: 0; place-items: center;
+        pointer-events: auto; transform: translateX(calc(-50% + 5.7rem));
+        border: 3px solid rgba(255,255,255,.9); border-radius: 50%;
+        background: rgba(12,12,12,.48); box-shadow: 0 4px 18px rgba(0,0,0,.32);
+        backdrop-filter: blur(10px); cursor: pointer;
+      }
+      .record::after {
+        width: 1.5rem; height: 1.5rem; border-radius: 50%; background: #ff3b30; content: "";
+        transition: width .15s ease, height .15s ease, border-radius .15s ease;
+      }
+      .record.recording::after { width: 1.1rem; height: 1.1rem; border-radius: .22rem; }
+      .record:disabled { opacity: .55; }
+      .record[hidden] { display: none; }
+      .rec-timer {
+        position: absolute; left: 50%; bottom: calc(max(1rem, env(safe-area-inset-bottom)) + 11.1rem);
+        padding: .3rem .7rem; transform: translateX(-50%);
+        border-radius: 999px; color: #fff; background: rgba(255,59,48,.92);
+        font-size: .8rem; font-weight: 800; letter-spacing: .04em;
+      }
+      .rec-timer[hidden] { display: none; }
+      .photo-preview video {
+        width: 100%; min-height: 0; flex: 1; object-fit: contain;
+        border-radius: .9rem; background: #000;
+      }
+      .photo-preview video[hidden], .photo-preview img[hidden] { display: none; }
       .reset-view {
         position: absolute; top: calc(max(1rem, env(safe-area-inset-top)) + 4.2rem); right: 1rem;
         min-height: 2.75rem; padding: 0 .95rem; pointer-events: auto;
@@ -207,10 +235,66 @@
             model.setAttribute("position", { x: 0, y: 0.018 - box.min.y * factor, z: 0 });
           };
 
+          const recordButton = document.querySelector("#record-button");
+          const recTimer = document.querySelector("#rec-timer");
+          const previewVideo = document.querySelector("#photo-preview-video");
+          const RECORD_SECONDS = 10;
+          let capturedIsVideo = false;
+          let recorder = null;
+          let recordChunks = [];
+          let recordTimeout = null;
+          let recordTicker = null;
+
           const updateCapture = () => {
-            capture.hidden = !(modelReady && markerVisible);
-            resetView.hidden = !(modelReady && markerVisible);
+            const ready = modelReady && markerVisible;
+            capture.hidden = !ready;
+            resetView.hidden = !ready;
+            recordButton.hidden = !(ready || component.recording);
           };
+
+          // AR.js sizes the canvas to COVER the screen, so it hangs outside the
+          // viewport. Both the photo and the video capture only the visible slice.
+          // maxSide caps the recording resolution so compositing keeps up on a phone.
+          const visibleCrop = (maxSide) => {
+            const arCanvas = document.querySelector("canvas.a-canvas");
+            if (!arCanvas) return null;
+            const rect = arCanvas.getBoundingClientRect();
+            const dpr = Math.min(window.devicePixelRatio || 1, 2);
+            const cropX = Math.max(0, -rect.left);
+            const cropY = Math.max(0, -rect.top);
+            const cropWidth = Math.max(1, Math.min(rect.width - cropX, window.innerWidth));
+            const cropHeight = Math.max(1, Math.min(rect.height - cropY, window.innerHeight));
+            let scale = dpr;
+            if (maxSide) {
+              const longest = Math.max(cropWidth, cropHeight) * dpr;
+              if (longest > maxSide) scale = dpr * (maxSide / longest);
+            }
+            // H.264 requires even dimensions.
+            const even = (v) => Math.max(2, Math.round(v) - (Math.round(v) % 2));
+            return {
+              arCanvas, rect, cropX, cropY, cropWidth, cropHeight,
+              width: even(cropWidth * scale), height: even(cropHeight * scale)
+            };
+          };
+
+          const compositeFrame = (context, crop, layer) => {
+            const video = document.querySelector("#arjs-video") || document.querySelector("video");
+            if (video && video.readyState >= 2 && video.videoWidth) {
+              context.drawImage(video,
+                (crop.cropX / crop.rect.width) * video.videoWidth,
+                (crop.cropY / crop.rect.height) * video.videoHeight,
+                (crop.cropWidth / crop.rect.width) * video.videoWidth,
+                (crop.cropHeight / crop.rect.height) * video.videoHeight,
+                0, 0, crop.width, crop.height);
+            }
+            const scaleX = layer.width / crop.rect.width;
+            const scaleY = layer.height / crop.rect.height;
+            context.drawImage(layer,
+              crop.cropX * scaleX, crop.cropY * scaleY,
+              crop.cropWidth * scaleX, crop.cropHeight * scaleY,
+              0, 0, crop.width, crop.height);
+          };
+          component.compositeFrame = compositeFrame;
 
           // The model is authored facing +Z, but the viewer stands on the opposite
           // side of the marker, so it needs half a turn to face them. Drag-rotate
@@ -262,10 +346,132 @@
             status.innerHTML = "<strong>Front view restored</strong><span>Drag left or right to rotate the Lucky Cat.</span>";
           });
 
+          const pickMimeType = () => {
+            const candidates = [
+              "video/mp4;codecs=avc1.42E01E",   // Safari/iOS produces H.264 MP4
+              "video/mp4",
+              "video/webm;codecs=vp9",
+              "video/webm;codecs=vp8",
+              "video/webm"
+            ];
+            for (let i = 0; i < candidates.length; i++) {
+              if (window.MediaRecorder && MediaRecorder.isTypeSupported(candidates[i])) return candidates[i];
+            }
+            return "";
+          };
+
+          const stopRecording = () => {
+            if (recordTimeout) { clearTimeout(recordTimeout); recordTimeout = null; }
+            if (recordTicker) { clearInterval(recordTicker); recordTicker = null; }
+            if (recorder && recorder.state !== "inactive") {
+              recorder.stop();
+            } else {
+              component.recording = false;
+              recordButton.classList.remove("recording");
+              recTimer.hidden = true;
+              updateCapture();
+            }
+          };
+
+          const startRecording = () => {
+            if (component.recording) return stopRecording();
+            const crop = visibleCrop(1280);
+            if (!crop || !window.MediaRecorder) {
+              status.innerHTML = "<strong>Recording unavailable</strong><span>This browser cannot record video.</span>";
+              return;
+            }
+
+            const canvas = document.createElement("canvas");
+            canvas.width = crop.width;
+            canvas.height = crop.height;
+            const context = canvas.getContext("2d");
+            if (!context) return;
+
+            component.recordCrop = crop;
+            component.recordContext = context;
+            component.recording = true;
+            // Paint one frame immediately so the stream never starts on a blank canvas.
+            compositeFrame(context, crop, crop.arCanvas);
+
+            let stream;
+            try {
+              stream = canvas.captureStream(30);
+            } catch (error) {
+              component.recording = false;
+              return;
+            }
+
+            const mimeType = pickMimeType();
+            try {
+              recorder = new MediaRecorder(stream, mimeType
+                ? { mimeType: mimeType, videoBitsPerSecond: 5000000 }
+                : undefined);
+            } catch (error) {
+              component.recording = false;
+              status.innerHTML = "<strong>Recording unavailable</strong><span>This browser cannot record video.</span>";
+              return;
+            }
+
+            recordChunks = [];
+            recorder.ondataavailable = (event) => {
+              if (event.data && event.data.size) recordChunks.push(event.data);
+            };
+            recorder.onstop = () => {
+              component.recording = false;
+              component.recordCrop = null;
+              component.recordContext = null;
+              recordButton.classList.remove("recording");
+              recTimer.hidden = true;
+              const type = (recorder && recorder.mimeType) || mimeType || "video/mp4";
+              recorder = null;
+              updateCapture();
+              if (!recordChunks.length) return;
+              const blob = new Blob(recordChunks, { type: type });
+              recordChunks = [];
+              if (capturedUrl) URL.revokeObjectURL(capturedUrl);
+              capturedBlob = blob;
+              capturedIsVideo = true;
+              capturedUrl = URL.createObjectURL(blob);
+              previewImage.hidden = true;
+              previewImage.removeAttribute("src");
+              previewVideo.hidden = false;
+              previewVideo.src = capturedUrl;
+              previewNote.textContent = "Tap Save to Photos, or press and hold the video to save it.";
+              preview.hidden = false;
+              track("video_recorded", activeModelName);
+            };
+
+            recorder.start();
+            component.recording = true;
+            recordButton.classList.add("recording");
+            recTimer.hidden = false;
+
+            let remaining = RECORD_SECONDS;
+            recTimer.textContent = "REC " + remaining + "s";
+            recordTicker = setInterval(() => {
+              remaining -= 1;
+              recTimer.textContent = "REC " + Math.max(remaining, 0) + "s";
+            }, 1000);
+            recordTimeout = setTimeout(stopRecording, RECORD_SECONDS * 1000);
+            track("video_started", activeModelName);
+          };
+
+          recordButton.addEventListener("click", startRecording);
+          // Never leave a recording running when the page is backgrounded.
+          document.addEventListener("visibilitychange", () => {
+            if (document.visibilityState === "hidden" && component.recording) stopRecording();
+          });
+
           const closePreview = () => {
             preview.hidden = true;
             previewImage.removeAttribute("src");
+            previewVideo.pause();
+            previewVideo.removeAttribute("src");
+            previewVideo.load();
+            previewVideo.hidden = true;
+            previewImage.hidden = false;
             capturedBlob = null;
+            capturedIsVideo = false;
             if (capturedUrl) URL.revokeObjectURL(capturedUrl);
             capturedUrl = null;
           };
@@ -274,13 +480,17 @@
 
           savePhoto.addEventListener("click", async () => {
             if (!capturedBlob) return;
-            const file = new File([capturedBlob], "lucky-cat-ar-photo.jpg", { type: "image/jpeg" });
+            const type = capturedBlob.type || (capturedIsVideo ? "video/mp4" : "image/jpeg");
+            const extension = capturedIsVideo ? (type.indexOf("webm") >= 0 ? "webm" : "mp4") : "jpg";
+            const file = new File([capturedBlob], "lucky-cat-ar." + extension, { type: type });
             try {
               if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
-                await navigator.share({ files: [file], title: "Lucky Cat AR photo" });
+                await navigator.share({ files: [file], title: capturedIsVideo ? "Lucky Cat AR video" : "Lucky Cat AR photo" });
                 track("photo_saved", activeModelName);
               } else {
-                previewNote.textContent = "Press and hold the photo, then choose Save to Photos.";
+                previewNote.textContent = capturedIsVideo
+                  ? "Press and hold the video, then choose Save to Photos."
+                  : "Press and hold the photo, then choose Save to Photos.";
               }
             } catch (error) {
               if (error.name !== "AbortError") {
@@ -372,6 +582,10 @@
             if (capturedUrl) URL.revokeObjectURL(capturedUrl);
             capturedBlob = blob;
             capturedUrl = URL.createObjectURL(blob);
+            capturedIsVideo = false;
+            previewVideo.hidden = true;
+            previewVideo.removeAttribute("src");
+            previewImage.hidden = false;
             previewImage.src = capturedUrl;
             previewNote.textContent = "On iPhone, choose Save Image from the share menu.";
             preview.hidden = false;
@@ -500,7 +714,28 @@
         tick: function (time, delta) {
           if (this.mixer && delta) this.mixer.update(delta / 1000);
         },
+        // tock runs after the frame is rendered. The WebGL context has no
+        // preserveDrawingBuffer, so the scene is re-rendered here to guarantee
+        // the buffer holds this frame before it is copied into the recording
+        // canvas. The model is only ~6k triangles, so the extra pass is cheap.
+        tock: function () {
+          if (!this.recording || !this.recordContext || !this.recordCrop) return;
+          const sceneEl = this.el.sceneEl;
+          try {
+            if (sceneEl.renderer && sceneEl.camera) {
+              sceneEl.renderer.render(sceneEl.object3D, sceneEl.camera);
+            }
+          } catch (error) {
+            /* fall through and copy whatever the buffer holds */
+          }
+          try {
+            this.compositeFrame(this.recordContext, this.recordCrop, this.recordCrop.arCanvas);
+          } catch (error) {
+            /* a dropped frame is preferable to breaking the render loop */
+          }
+        },
         remove: function () {
+          this.recording = false;
           if (this.mixer) this.mixer.stopAllAction();
           if (this.lossTimer) clearTimeout(this.lossTimer);
         }
@@ -517,6 +752,8 @@
       <button class="reset-view" id="reset-view-button" type="button" aria-label="Reset Lucky Cat to front view" hidden>↻ Front</button>
       <button class="anim-button" id="anim-button" type="button" aria-label="Change animation" hidden>&#9654; <span id="anim-label">&#8212;</span></button>
       <button class="capture" id="capture-button" type="button" aria-label="Take AR photo" hidden></button>
+      <button class="record" id="record-button" type="button" aria-label="Record a 10 second AR video" hidden></button>
+      <div class="rec-timer" id="rec-timer" hidden>REC 10s</div>
       <div class="bottom" id="status-copy">
         <strong>Point at the printed target</strong>
         <span>Keep the full black square inside the frame.</span>
@@ -528,7 +765,8 @@
     </div>
 
     <div class="photo-preview" id="photo-preview" aria-label="Captured AR photo" hidden>
-      <img id="photo-preview-image" alt="Captured camera view with the Lucky Cat" />
+      <img id="photo-preview-image" alt="Captured camera view with the cat" />
+      <video id="photo-preview-video" playsinline controls loop hidden></video>
       <div class="preview-actions">
         <button class="preview-button" id="retake-button" type="button">Retake</button>
         <button class="preview-button primary" id="save-photo-button" type="button">Save to Photos</button>
